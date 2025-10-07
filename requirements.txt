@@ -1,0 +1,1 @@
+NOTE: pytesseract requires system Tesseract. If you don't need OCR, the app will still run. For video handling we use OpenCV.
