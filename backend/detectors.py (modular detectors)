@@ -1,0 +1,82 @@
+# backend/detectors.py
+class TextDetector(BaseDetector):
+def __init__(self, store):
+super().__init__('text', store)
+
+
+def _extract_features_from_text(self, text):
+# light TF-IDF-like token counts of selected tokens (simple)
+import re
+toks = re.findall(r"\w+", text.lower())
+# top 50 tokens by frequency
+from collections import Counter
+c = Counter(toks)
+common = [w for w,_ in c.most_common(50)]
+vec = np.array([c.get(w,0) for w in common], dtype=float)
+if vec.sum() == 0:
+vec = vec + 1e-6
+return vec
+
+
+def handle_file(self, path):
+text = extract_text_from_doc(path)
+feat = self._extract_features_from_text(text)
+res = self.explain(feat.reshape(1,-1))
+return {'type': 'text', 'filename': Path(path).name, 'result': res}
+
+
+
+
+class SensorDetector(BaseDetector):
+def __init__(self, store):
+super().__init__('sensor', store)
+
+
+def handle_dataframe(self, df: pd.DataFrame):
+# take numeric columns, rolling windows features (mean,std,diff)
+num = df.select_dtypes(include=[np.number]).fillna(method='ffill').fillna(0.0)
+if num.shape[1] == 0:
+raise ValueError('No numeric columns in sensor data')
+# features per row: values concatenated with short window stats (last 5 rows)
+window = 5
+features = []
+arr = num.values
+for i in range(len(arr)):
+start = max(0, i-window+1)
+w = arr[start:i+1]
+stats = np.concatenate([w.mean(axis=0), w.std(axis=0)])
+feat = np.concatenate([arr[i], stats])
+features.append(feat)
+X = np.vstack(features)
+scores = self.score(X)
+# return timestamps if available
+return {'type': 'sensor', 'n_rows': len(X), 'scores': scores.tolist(), 'is_anomaly': (scores > np.percentile(scores, 99)).astype(int).tolist()}
+
+
+
+
+class VideoDetector(BaseDetector):
+def __init__(self, store):
+super().__init__('video', store)
+
+
+def handle_file(self, path):
+# extract frames at interval, treat each frame with ImageDetector features
+from utils import extract_frames
+frames = extract_frames(path, max_frames=50, step=10)
+imgdet = ImageDetector(self.store)
+feats = []
+for f in frames:
+feats.append(imgdet._extract_features(f))
+X = np.vstack(feats)
+scores = self.score(X)
+return {'type': 'video', 'n_frames': X.shape[0], 'scores': scores.tolist(), 'is_anomaly': (scores > np.percentile(scores, 99)).astype(int).tolist()}
+
+
+
+
+class DetectorRouter:
+def __init__(self, store: ModelStore):
+self.store = store
+self.image = ImageDetector(store)
+self.text = TextDetec
